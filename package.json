@@ -1,0 +1,55 @@
+{
+  "name": "pinarak-invoice-generator",
+  "version": "1.0.0",
+  "description": "Premium Invoice Generator Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build": "tsc && vite build",
+    "pack": "npm run build && electron-builder"
+  },
+  "keywords": [
+    "invoice",
+    "electron",
+    "react",
+    "tailwind"
+  ],
+  "author": "Pinarak Villa Management",
+  "license": "ISC",
+  "dependencies": {
+    "lucide-react": "^0.395.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.4.5",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.pinarak.invoicegenerator",
+    "productName": "Pinarak Invoice Generator",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}

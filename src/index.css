@@ -1,0 +1,164 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Print value display: hidden on screen, shown in print */
+.print-value { display: none; }
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Premium styled custom scrollbar for sidebar configurations */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1; /* slate-300 */
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; /* slate-400 */
+}
+
+/* Hide default number input spinners for cleaner visual inputs */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Specific CSS print configurations to support native printing without breaks */
+@page {
+  size: A4;
+  margin: 0 !important;
+}
+
+@media print {
+  /* Completely hide all structural layout and interactive elements */
+  .print-hidden, 
+  header, 
+  footer, 
+  .fixed, 
+  button {
+    display: none !important;
+  }
+
+  /* Reset document viewport to standard white backing and flat page rules to avoid grey background leaks */
+  html, body, #root, #root > div, div.min-h-screen {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Flatten layout parent grid/flex containers and force full printed height */
+  main, 
+  section.lg\:col-span-8 {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* Isolate the invoice block and stretch it to standard A4 specifications safely */
+  #invoice-capture-area {
+    position: relative !important; /* Relative so it flows naturally in block context */
+    width: 100% !important; /* Spans full page width to avoid right-column clipping */
+    height: 100% !important; /* Spans full page height */
+    max-height: 100% !important;
+    min-height: 100% !important;
+    margin: 0 auto !important; /* Center the scaled document perfectly on the page */
+    max-width: none !important; /* Releases the max-width restriction of Tailwind max-w-[21cm] */
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    z-index: 99999 !important;
+    box-sizing: border-box !important; /* Strict border-box calculation */
+    overflow: hidden !important; /* Strict 1-page overflow containment */
+    page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+    page-break-before: avoid !important;
+  }
+
+  /* Responsive content scaling based on Spacing Mode to fit exactly 1 page */
+  
+  #invoice-capture-area[data-spacing="standard"] {
+    zoom: 93% !important; /* Slight zoom ensures full vertical fit while retaining symmetric horizontal margins */
+    padding: 10mm 14mm !important;
+  }
+
+  #invoice-capture-area[data-spacing="compact"] {
+    zoom: 86% !important;
+    padding: 8mm 12mm !important;
+  }
+
+  #invoice-capture-area[data-spacing="super-compact"] {
+    zoom: 78% !important;
+    padding: 6mm 10mm !important;
+  }
+
+  /* Remove all borders, backgrounds, and outlines on input fields for a typed-document finish */
+  input, select, textarea {
+    border: none !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    color: inherit; /* Inherits the designed text colors by default, but allows inline styles and classes to override */
+    font-weight: inherit;
+  }
+
+  /* Hide number scroll indicators */
+  input[type=number]::-webkit-inner-spin-button, 
+  input[type=number]::-webkit-outer-spin-button { 
+    -webkit-appearance: none !important; 
+    margin: 0 !important; 
+  }
+
+  /* Show formatted values and hide raw number inputs in print */
+  .print-value { display: inline !important; }
+  input.print-input-hide { display: none !important; }
+
+  /* Disable animations to prevent opacity capture issues */
+  .animate-pulse {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  /* Force premium background colors and gradients to print correctly */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
