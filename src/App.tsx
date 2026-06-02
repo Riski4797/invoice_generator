@@ -172,7 +172,7 @@ export default function App() {
   const [toast, setToast] = useState<Toast | null>(null);
 
   // --- Update Checker States ---
-  const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('pinarak_githubRepoUrl') || '');
+  const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('pinarak_githubRepoUrl') || 'https://github.com/Riski4797/invoice_generator');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'latest' | 'available' | 'error'>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
