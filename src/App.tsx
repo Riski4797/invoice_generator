@@ -605,7 +605,7 @@ export default function App() {
   };
 
   // --- Update Checker Logic ---
-  const CURRENT_VERSION = '1.1.1';
+  const CURRENT_VERSION = '1.1.2';
 
   const isNewerVersion = (current: string, remote: string) => {
     const curParts = current.split('.').map(Number);

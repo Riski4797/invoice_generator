@@ -156,20 +156,21 @@ ipcMain.handle('download-update', async (event, { url, browserDownloadUrl, token
     const writer = fs.createWriteStream(tempFilePath);
     const nodeReadable = Readable.fromWeb(response.body);
     
-    nodeReadable.on('data', (chunk) => {
+    for await (const chunk of nodeReadable) {
       downloadedBytes += chunk.length;
+      if (!writer.write(chunk)) {
+        await new Promise((resolve) => writer.once('drain', resolve));
+      }
       if (totalBytes > 0) {
         const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
         event.sender.send('download-progress', percent);
       }
-    });
-    
-    nodeReadable.pipe(writer);
+    }
+    writer.end();
     
     await new Promise((resolve, reject) => {
       writer.on('finish', resolve);
       writer.on('error', reject);
-      nodeReadable.on('error', reject);
     });
     
     console.log(`Download complete! Launching installer at: ${tempFilePath}`);
