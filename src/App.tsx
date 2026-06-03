@@ -31,6 +31,8 @@ declare global {
         error?: string;
       }>;
       openExternal?: (url: string) => void;
+      downloadUpdate?: (url: string, browserDownloadUrl: string, token?: string) => Promise<{ success: boolean; error?: string }>;
+      onDownloadProgress?: (callback: (percent: number) => void) => () => void;
     };
   }
 }
@@ -215,6 +217,10 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'latest' | 'available' | 'error'>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
+  const [updateAssetUrl, setUpdateAssetUrl] = useState<string | null>(null);
+  const [updateBrowserUrl, setUpdateBrowserUrl] = useState<string | null>(null);
+  const [isDownloadingUpdate, setIsDownloadingUpdate] = useState<boolean>(false);
+  const [downloadPercent, setDownloadPercent] = useState<number>(0);
 
   // --- Spacing Spacers & Compactness States ---
   const [autoFitSpacing, setAutoFitSpacing] = useState<boolean>(() => {
@@ -652,23 +658,48 @@ export default function App() {
 
     try {
       const headers: HeadersInit = {
-        'Accept': 'application/vnd.github.v3.raw'
+        'Accept': 'application/vnd.github.v3+json'
       };
       if (githubToken) {
         headers['Authorization'] = `token ${githubToken}`;
       }
 
-      // Try fetching package.json from main branch via GitHub Contents API
-      let response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=main`, { headers });
-      if (!response.ok) {
-        // Fallback to master branch
-        response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=master`, { headers });
-        if (!response.ok) {
-          // If both Contents API fail, fallback to public raw.githubusercontent path
+      // Try fetching the latest release first via GitHub Release API (gives download assets links directly)
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers });
+      if (response.ok) {
+        const releaseData = await response.json();
+        const remoteVersion = releaseData.tag_name.replace(/^v/, '');
+        setLatestVersion(remoteVersion);
+
+        const exeAsset = releaseData.assets?.find((asset: any) => asset.name.endsWith('.exe'));
+        if (exeAsset) {
+          setUpdateAssetUrl(exeAsset.url);
+          setUpdateBrowserUrl(exeAsset.browser_download_url);
+        }
+
+        if (isNewerVersion(CURRENT_VERSION, remoteVersion)) {
+          setUpdateStatus('available');
+          setShowUpdateModal(true);
+          triggerToast(`Pembaruan tersedia! Versi terbaru: v${remoteVersion}`, 'success');
+        } else {
+          setUpdateStatus('latest');
+          if (!silent) triggerToast('Aplikasi Anda sudah menggunakan versi terbaru.', 'success');
+        }
+        return;
+      }
+      
+      // Fallback: If releases endpoint fails (e.g. no releases on repo yet), check raw package.json contents
+      const rawHeaders: HeadersInit = { 'Accept': 'application/vnd.github.v3.raw' };
+      if (githubToken) rawHeaders['Authorization'] = `token ${githubToken}`;
+      
+      let contentsResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=main`, { headers: rawHeaders });
+      if (!contentsResponse.ok) {
+        contentsResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=master`, { headers: rawHeaders });
+        if (!contentsResponse.ok) {
           const rawResponse = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/package.json`);
           if (!rawResponse.ok) {
             const rawFbResponse = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/package.json`);
-            if (!rawFbResponse.ok) throw new Error('Gagal mengunduh metadata update dari API maupun raw.');
+            if (!rawFbResponse.ok) throw new Error('Gagal mengunduh metadata rilis.');
             const data = await rawFbResponse.json();
             processUpdateData(data, silent);
             return;
@@ -679,13 +710,51 @@ export default function App() {
           }
         }
       }
-      
-      const data = await response.json();
+      const data = await contentsResponse.json();
       processUpdateData(data, silent);
     } catch (error) {
       console.error('Update check failed:', error);
       setUpdateStatus('error');
       if (!silent) triggerToast('Gagal memeriksa pembaruan. Pastikan token, URL & internet aktif.', 'error');
+    }
+  };
+
+  const handleStartUpdate = async () => {
+    if (!window.electronAPI?.onDownloadProgress || !window.electronAPI?.downloadUpdate || !updateAssetUrl || !updateBrowserUrl) {
+      // Browser fallback (open releases URL)
+      const downloadUrl = githubRepoUrl.endsWith('/releases') ? githubRepoUrl : `${githubRepoUrl}/releases`;
+      if (window.electronAPI?.openExternal) {
+        window.electronAPI.openExternal(downloadUrl);
+      } else {
+        window.open(downloadUrl, '_blank');
+      }
+      return;
+    }
+
+    setIsDownloadingUpdate(true);
+    setDownloadPercent(0);
+
+    // Subscribe to progress events from native thread
+    const unsubscribe = window.electronAPI.onDownloadProgress((percent: number) => {
+      setDownloadPercent(percent);
+    });
+
+    try {
+      const result = await window.electronAPI.downloadUpdate(
+        updateAssetUrl,
+        updateBrowserUrl,
+        githubToken || undefined
+      );
+
+      if (result && !result.success) {
+        unsubscribe();
+        setIsDownloadingUpdate(false);
+        triggerToast(`Gagal mengunduh pembaruan: ${result.error}`, 'error');
+      }
+    } catch (error: any) {
+      unsubscribe();
+      setIsDownloadingUpdate(false);
+      triggerToast(`Eror saat melakukan pembaruan: ${error.message || error}`, 'error');
     }
   };
 
@@ -833,32 +902,59 @@ export default function App() {
               </div>
             </div>
             
-            <p className="text-xs text-slate-600 leading-relaxed mb-6">
-              Versi terbaru **v{latestVersion}** telah dirilis di repositori GitHub Anda. Silakan unduh pembaruan terbaru untuk menikmati fitur termutakhir, perbaikan layout, dan peningkatan performa lainnya.
-            </p>
+            {isDownloadingUpdate ? (
+              <div className="mb-6">
+                <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-2">
+                  <span>Mengunduh File Installer...</span>
+                  <span className="font-mono text-emerald-600">{downloadPercent}%</span>
+                </div>
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                  <div 
+                    className="h-full bg-emerald-600 transition-all duration-150 rounded-full" 
+                    style={{ width: `${downloadPercent}%` }}
+                  ></div>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2.5 italic text-center">
+                  {downloadPercent === 100 ? 'Hampir selesai, menutup aplikasi dan meluncurkan installer...' : 'Mohon jangan menutup aplikasi selama proses unduhan.'}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-600 leading-relaxed mb-6">
+                Versi terbaru **v{latestVersion}** telah dirilis di repositori GitHub Anda. Silakan klik "Perbarui Otomatis" untuk mengunduh dan memasang versi terbaru secara instan.
+              </p>
+            )}
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  const downloadUrl = githubRepoUrl.endsWith('/releases') ? githubRepoUrl : `${githubRepoUrl}/releases`;
-                  if (window.electronAPI?.openExternal) {
-                    window.electronAPI.openExternal(downloadUrl);
-                  } else {
-                    window.open(downloadUrl, '_blank');
-                  }
-                }}
-                className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 px-4 rounded-xl shadow-md transition duration-150"
-              >
-                <Download className="w-4 h-4" />
-                Unduh Rilis Baru
-              </button>
-              <button
-                onClick={() => setShowUpdateModal(false)}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs py-2.5 px-4 rounded-xl transition duration-150"
-              >
-                Nanti Saja
-              </button>
-            </div>
+            {!isDownloadingUpdate && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleStartUpdate}
+                  className="flex-[2] flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 px-4 rounded-xl shadow-md transition duration-150"
+                >
+                  <Download className="w-4 h-4" />
+                  Perbarui Otomatis
+                </button>
+                <button
+                  onClick={() => {
+                    const downloadUrl = githubRepoUrl.endsWith('/releases') ? githubRepoUrl : `${githubRepoUrl}/releases`;
+                    if (window.electronAPI?.openExternal) {
+                      window.electronAPI.openExternal(downloadUrl);
+                    } else {
+                      window.open(downloadUrl, '_blank');
+                    }
+                  }}
+                  className="flex-1 flex items-center justify-center bg-slate-150 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] py-2.5 px-2 rounded-xl transition duration-150"
+                  title="Unduh manual lewat browser"
+                >
+                  Unduh Manual
+                </button>
+                <button
+                  onClick={() => setShowUpdateModal(false)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] py-2.5 px-2 rounded-xl transition duration-150"
+                >
+                  Nanti Saja
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

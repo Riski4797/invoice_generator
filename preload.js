@@ -18,5 +18,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Opens an external link safely in the user's default browser
    * @param {string} url The URL to open
    */
-  openExternal: (url) => ipcRenderer.send('open-external', url)
+  openExternal: (url) => ipcRenderer.send('open-external', url),
+
+  /**
+   * Invokes the update installer download in the main thread
+   */
+  downloadUpdate: (url, browserDownloadUrl, token) => ipcRenderer.invoke('download-update', { url, browserDownloadUrl, token }),
+
+  /**
+   * Listens to download progress updates
+   */
+  onDownloadProgress: (callback) => {
+    const listener = (event, percent) => callback(percent);
+    ipcRenderer.on('download-progress', listener);
+    return () => {
+      ipcRenderer.removeListener('download-progress', listener);
+    };
+  }
 });

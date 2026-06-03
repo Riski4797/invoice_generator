@@ -115,3 +115,78 @@ ipcMain.handle('print-to-pdf', async (event, defaultFileName) => {
     return { success: false, error: error.message };
   }
 });
+
+// IPC Handler to download update installer and execute it
+ipcMain.handle('download-update', async (event, { url, browserDownloadUrl, token }) => {
+  const { spawn } = require('child_process');
+  const { Readable } = require('stream');
+  
+  const tempDir = app.getPath('temp');
+  const tempFilePath = path.join(tempDir, 'Pinarak_Invoice_Generator_Setup_Update.exe');
+  
+  // Clean up any old update files if they exist
+  try {
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+  } catch (e) {
+    console.error('Failed to delete old update file:', e);
+  }
+  
+  const downloadUrl = token ? url : browserDownloadUrl;
+  console.log(`Starting update download from: ${downloadUrl}`);
+  
+  try {
+    const headers = {
+      'User-Agent': 'pinarak-invoice-generator-updater'
+    };
+    if (token) {
+      headers['Authorization'] = `token ${token}`;
+      headers['Accept'] = 'application/octet-stream';
+    }
+    
+    const response = await fetch(downloadUrl, { headers });
+    if (!response.ok) {
+      throw new Error(`Failed to download update: HTTP ${response.status} ${response.statusText}`);
+    }
+    
+    const totalBytes = Number(response.headers.get('content-length')) || 0;
+    let downloadedBytes = 0;
+    
+    const writer = fs.createWriteStream(tempFilePath);
+    const nodeReadable = Readable.fromWeb(response.body);
+    
+    nodeReadable.on('data', (chunk) => {
+      downloadedBytes += chunk.length;
+      if (totalBytes > 0) {
+        const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
+        event.sender.send('download-progress', percent);
+      }
+    });
+    
+    nodeReadable.pipe(writer);
+    
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+      nodeReadable.on('error', reject);
+    });
+    
+    console.log(`Download complete! Launching installer at: ${tempFilePath}`);
+    
+    // Execute the installer in a detached process and close this app
+    const child = spawn(tempFilePath, [], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    
+    // Quit application immediately so installer can overwrite active files
+    app.quit();
+    return { success: true };
+    
+  } catch (error) {
+    console.error('Update download error:', error);
+    return { success: false, error: error.message };
+  }
+});
