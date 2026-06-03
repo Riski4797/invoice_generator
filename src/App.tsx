@@ -12,7 +12,11 @@ import {
   Sparkles,
   CheckCircle,
   AlertCircle,
-  Laptop
+  Laptop,
+  History,
+  Save,
+  FolderOpen,
+  FilePlus
 } from 'lucide-react';
 
 // TypeScript Declarations for Electron IPC
@@ -54,6 +58,22 @@ interface Item {
 interface Toast {
   message: string;
   type: 'success' | 'error' | 'info';
+}
+
+interface SavedInvoice {
+  id: string;
+  invoiceNo: string;
+  customerName: string;
+  customerPhone: string;
+  checkInDate: string;
+  checkInTime: string;
+  checkOutDate: string;
+  checkOutTime: string;
+  items: Item[];
+  dpValue: number;
+  discountValue: number;
+  paymentMethod: string;
+  createdAt: string;
 }
 
 export default function App() {
@@ -147,25 +167,43 @@ export default function App() {
 
   const [footerBannerText, setFooterBannerText] = useState(() => localStorage.getItem('pinarak_footerBannerText') || 'PELUNASAN WAJIB H-1 SEBELUM CHECK-IN');
 
-  // Non-persisted transactional details
-  const [customerName, setCustomerName] = useState('Bpk. Budi Sentosa');
-  const [customerPhone, setCustomerPhone] = useState('0812-3456-7890');
-  const [invoiceNo, setInvoiceNo] = useState(`INV/${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}/012`);
-  const [paymentMethod, setPaymentMethod] = useState('Transfer BCA');
+  // --- States for History & Drafts ---
+  const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>(() => {
+    const saved = localStorage.getItem('pinarak_savedInvoices');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(() => {
+    return localStorage.getItem('pinarak_activeInvoiceId') || null;
+  });
 
-  const [checkInDate, setCheckInDate] = useState('2026-06-15');
-  const [checkInTime, setCheckInTime] = useState('14:00');
-  const [checkOutDate, setCheckOutDate] = useState('2026-06-17');
-  const [checkOutTime, setCheckOutTime] = useState('11:00');
+  // Transactional details with draft persistence (fallback to defaults if no draft)
+  const [customerName, setCustomerName] = useState(() => localStorage.getItem('pinarak_draft_customerName') || 'Bpk. Budi Sentosa');
+  const [customerPhone, setCustomerPhone] = useState(() => localStorage.getItem('pinarak_draft_customerPhone') || '0812-3456-7890');
+  const [invoiceNo, setInvoiceNo] = useState(() => localStorage.getItem('pinarak_draft_invoiceNo') || `INV/${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}/012`);
+  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('pinarak_draft_paymentMethod') || 'Transfer BCA');
 
-  const [items, setItems] = useState<Item[]>([
-    { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
-    { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
-    { id: '3', name: 'Sewa Alat BBQ Arang Set', price: 250000, qty: 1 }
-  ]);
+  const [checkInDate, setCheckInDate] = useState(() => localStorage.getItem('pinarak_draft_checkInDate') || '2026-06-15');
+  const [checkInTime, setCheckInTime] = useState(() => localStorage.getItem('pinarak_draft_checkInTime') || '14:00');
+  const [checkOutDate, setCheckOutDate] = useState(() => localStorage.getItem('pinarak_draft_checkOutDate') || '2026-06-17');
+  const [checkOutTime, setCheckOutTime] = useState(() => localStorage.getItem('pinarak_draft_checkOutTime') || '11:00');
 
-  const [dpValue, setDpValue] = useState(1500000);
-  const [discountValue, setDiscountValue] = useState(200000);
+  const [items, setItems] = useState<Item[]>(() => {
+    const saved = localStorage.getItem('pinarak_draft_items');
+    return saved ? JSON.parse(saved) : [
+      { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
+      { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
+      { id: '3', name: 'Sewa Alat BBQ Arang Set', price: 250000, qty: 1 }
+    ];
+  });
+
+  const [dpValue, setDpValue] = useState(() => {
+    const saved = localStorage.getItem('pinarak_draft_dpValue');
+    return saved !== null ? Number(saved) : 1500000;
+  });
+  const [discountValue, setDiscountValue] = useState(() => {
+    const saved = localStorage.getItem('pinarak_draft_discountValue');
+    return saved !== null ? Number(saved) : 200000;
+  });
 
   const [newNote, setNewNote] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
@@ -187,6 +225,28 @@ export default function App() {
   });
 
   // --- Effects to Auto-save Configuration Variables ---
+  useEffect(() => {
+    localStorage.setItem('pinarak_savedInvoices', JSON.stringify(savedInvoices));
+  }, [savedInvoices]);
+
+  useEffect(() => {
+    localStorage.setItem('pinarak_activeInvoiceId', activeInvoiceId || '');
+  }, [activeInvoiceId]);
+
+  useEffect(() => {
+    localStorage.setItem('pinarak_draft_customerName', customerName);
+    localStorage.setItem('pinarak_draft_customerPhone', customerPhone);
+    localStorage.setItem('pinarak_draft_invoiceNo', invoiceNo);
+    localStorage.setItem('pinarak_draft_paymentMethod', paymentMethod);
+    localStorage.setItem('pinarak_draft_checkInDate', checkInDate);
+    localStorage.setItem('pinarak_draft_checkInTime', checkInTime);
+    localStorage.setItem('pinarak_draft_checkOutDate', checkOutDate);
+    localStorage.setItem('pinarak_draft_checkOutTime', checkOutTime);
+    localStorage.setItem('pinarak_draft_items', JSON.stringify(items));
+    localStorage.setItem('pinarak_draft_dpValue', String(dpValue));
+    localStorage.setItem('pinarak_draft_discountValue', String(discountValue));
+  }, [customerName, customerPhone, invoiceNo, paymentMethod, checkInDate, checkInTime, checkOutDate, checkOutTime, items, dpValue, discountValue]);
+
   useEffect(() => {
     localStorage.setItem('pinarak_theme', JSON.stringify(activeTheme));
   }, [activeTheme]);
@@ -539,7 +599,7 @@ export default function App() {
   };
 
   // --- Update Checker Logic ---
-  const CURRENT_VERSION = '1.0.0';
+  const CURRENT_VERSION = '1.1.0';
 
   const isNewerVersion = (current: string, remote: string) => {
     const curParts = current.split('.').map(Number);
@@ -612,6 +672,98 @@ export default function App() {
       }, 1500); // Slight delay after mount to avoid interfering with load animations
     }
   }, []);
+
+  // --- Handlers for Invoice History (Riwayat Invoice) ---
+  const handleNewInvoice = () => {
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const seq = String(savedInvoices.length + 1).padStart(3, '0');
+    
+    setInvoiceNo(`INV/${year}${month}/${seq}`);
+    setCustomerName('Bpk. Budi Sentosa');
+    setCustomerPhone('0812-3456-7890');
+    setPaymentMethod('Transfer BCA');
+    setCheckInDate('2026-06-15');
+    setCheckInTime('14:00');
+    setCheckOutDate('2026-06-17');
+    setCheckOutTime('11:00');
+    setItems([
+      { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
+      { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
+      { id: '3', name: 'Sewa Alat BBQ Arang Set', price: 250000, qty: 1 }
+    ]);
+    setDpValue(1500000);
+    setDiscountValue(200000);
+    setActiveInvoiceId(null);
+    triggerToast('Form baru telah disiapkan.', 'info');
+  };
+
+  const handleSaveInvoice = () => {
+    if (!invoiceNo.trim()) {
+      triggerToast('Nomor invoice tidak boleh kosong!', 'error');
+      return;
+    }
+
+    const timestamp = new Date().toLocaleString('id-ID', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const invoiceData: SavedInvoice = {
+      id: activeInvoiceId || Date.now().toString(),
+      invoiceNo,
+      customerName,
+      customerPhone,
+      checkInDate,
+      checkInTime,
+      checkOutDate,
+      checkOutTime,
+      items,
+      dpValue,
+      discountValue,
+      paymentMethod,
+      createdAt: timestamp
+    };
+
+    if (activeInvoiceId) {
+      setSavedInvoices(prev => prev.map(inv => inv.id === activeInvoiceId ? invoiceData : inv));
+      triggerToast('Invoice berhasil diperbarui!');
+    } else {
+      setSavedInvoices(prev => [invoiceData, ...prev]);
+      setActiveInvoiceId(invoiceData.id);
+      triggerToast('Invoice baru disimpan ke riwayat!');
+    }
+  };
+
+  const handleLoadInvoice = (inv: SavedInvoice) => {
+    setInvoiceNo(inv.invoiceNo);
+    setCustomerName(inv.customerName);
+    setCustomerPhone(inv.customerPhone);
+    setCheckInDate(inv.checkInDate);
+    setCheckInTime(inv.checkInTime);
+    setCheckOutDate(inv.checkOutDate);
+    setCheckOutTime(inv.checkOutTime);
+    setItems(inv.items);
+    setDpValue(inv.dpValue);
+    setDiscountValue(inv.discountValue);
+    setPaymentMethod(inv.paymentMethod);
+    setActiveInvoiceId(inv.id);
+    triggerToast(`Invoice ${inv.invoiceNo} berhasil dimuat!`);
+  };
+
+  const handleDeleteInvoice = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm('Apakah Anda yakin ingin menghapus invoice ini dari riwayat?')) {
+      setSavedInvoices(prev => prev.filter(inv => inv.id !== id));
+      if (activeInvoiceId === id) {
+        setActiveInvoiceId(null);
+      }
+      triggerToast('Invoice dihapus dari riwayat.', 'info');
+    }
+  };
 
   // Elegant Default SVG Logo Generator
   const renderDefaultLogo = (sideText: string) => (
@@ -1174,6 +1326,107 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Riwayat Invoice Widget */}
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
+                <History className="w-4 h-4 text-slate-500" />
+                Riwayat Invoice
+              </h2>
+              <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full">
+                {savedInvoices.length} Tersimpan
+              </span>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Form Baru & Simpan Actions */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleNewInvoice}
+                  className="flex items-center justify-center gap-1.5 p-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold transition"
+                  title="Bersihkan form dan buat invoice baru"
+                >
+                  <FilePlus className="w-3.5 h-3.5" />
+                  Form Baru
+                </button>
+                <button
+                  onClick={handleSaveInvoice}
+                  className="flex items-center justify-center gap-1.5 p-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shadow-sm"
+                  title="Simpan draf aktif ke riwayat"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  Simpan Invoice
+                </button>
+              </div>
+
+              {/* History List */}
+              {savedInvoices.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                  <p className="text-xs font-medium">Belum ada riwayat invoice</p>
+                  <p className="text-[10px] mt-0.5 text-slate-400">Isi form dan klik "Simpan Invoice"</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {savedInvoices.map((inv) => {
+                    const isActive = activeInvoiceId === inv.id;
+                    const invoiceTotal = inv.items.reduce((sum, item) => sum + (item.price * item.qty), 0) - inv.dpValue - inv.discountValue;
+                    return (
+                      <div
+                        key={inv.id}
+                        onClick={() => handleLoadInvoice(inv)}
+                        className={`group relative p-3 rounded-lg border transition-all cursor-pointer ${
+                          isActive
+                            ? 'border-emerald-500 bg-emerald-50/50 shadow-sm ring-1 ring-emerald-500'
+                            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
+                        }`}
+                      >
+                        <div className="flex flex-col gap-1 pr-14">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-slate-700 truncate block max-w-[130px]">
+                              {inv.invoiceNo}
+                            </span>
+                            <span className="text-[9px] text-slate-400 font-mono">
+                              {inv.createdAt.split(' ')[0]}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-slate-500 truncate max-w-[100px]" title={inv.customerName}>
+                              {inv.customerName || 'Tanpa Nama'}
+                            </span>
+                            <span className="font-semibold text-slate-800 font-mono">
+                              {formatRupiah(invoiceTotal)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons overlay */}
+                        <div className="absolute right-2 top-2.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLoadInvoice(inv);
+                            }}
+                            className="p-1 rounded bg-white border border-slate-200 text-slate-600 hover:text-emerald-600 hover:border-emerald-200 transition"
+                            title="Muat invoice"
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteInvoice(inv.id, e)}
+                            className="p-1 rounded bg-white border border-slate-200 text-slate-600 hover:text-red-600 hover:border-red-200 transition"
+                            title="Hapus invoice"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
