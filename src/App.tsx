@@ -213,7 +213,6 @@ export default function App() {
 
   // --- Update Checker States ---
   const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('pinarak_githubRepoUrl') || 'https://github.com/Riski4797/invoice_generator');
-  const [githubToken, setGithubToken] = useState(() => localStorage.getItem('pinarak_githubToken') || '');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'latest' | 'available' | 'error'>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
@@ -297,10 +296,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('pinarak_githubRepoUrl', githubRepoUrl);
   }, [githubRepoUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('pinarak_githubToken', githubToken);
-  }, [githubToken]);
 
   // Compute final compactness spacing mode
   const getCompactnessMode = (): 'standard' | 'compact' | 'super-compact' => {
@@ -660,9 +655,6 @@ export default function App() {
       const headers: HeadersInit = {
         'Accept': 'application/vnd.github.v3+json'
       };
-      if (githubToken) {
-        headers['Authorization'] = `token ${githubToken}`;
-      }
 
       // Try fetching the latest release first via GitHub Release API (gives download assets links directly)
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers });
@@ -690,7 +682,6 @@ export default function App() {
       
       // Fallback: If releases endpoint fails (e.g. no releases on repo yet), check raw package.json contents
       const rawHeaders: HeadersInit = { 'Accept': 'application/vnd.github.v3.raw' };
-      if (githubToken) rawHeaders['Authorization'] = `token ${githubToken}`;
       
       let contentsResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=main`, { headers: rawHeaders });
       if (!contentsResponse.ok) {
@@ -715,7 +706,7 @@ export default function App() {
     } catch (error) {
       console.error('Update check failed:', error);
       setUpdateStatus('error');
-      if (!silent) triggerToast('Gagal memeriksa pembaruan. Pastikan token, URL & internet aktif.', 'error');
+      if (!silent) triggerToast('Gagal memeriksa pembaruan. Pastikan URL repositori valid & internet aktif.', 'error');
     }
   };
 
@@ -742,8 +733,7 @@ export default function App() {
     try {
       const result = await window.electronAPI.downloadUpdate(
         updateAssetUrl,
-        updateBrowserUrl,
-        githubToken || undefined
+        updateBrowserUrl
       );
 
       if (result && !result.success) {
@@ -1570,20 +1560,6 @@ export default function App() {
                 />
                 <span className="text-[9px] text-slate-400 block mt-1 leading-relaxed">
                   Aplikasi akan memantau file `package.json` di repositori ini secara otomatis dan memperingatkan Anda jika ada perubahan versi.
-                </span>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">GitHub Personal Access Token (PAT)</label>
-                <input 
-                  type="password" 
-                  value={githubToken} 
-                  placeholder="ghp_xxxxxxxxxxxx"
-                  onChange={(e) => setGithubToken(e.target.value)}
-                  className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-800"
-                />
-                <span className="text-[9px] text-slate-400 block mt-1 leading-relaxed">
-                  Opsional. Diperlukan jika repositori Anda bersifat **Private** agar aplikasi bisa mengunduh informasi versi secara aman.
                 </span>
               </div>
               
