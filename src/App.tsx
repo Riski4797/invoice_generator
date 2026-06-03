@@ -211,6 +211,7 @@ export default function App() {
 
   // --- Update Checker States ---
   const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('pinarak_githubRepoUrl') || 'https://github.com/Riski4797/invoice_generator');
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem('pinarak_githubToken') || '');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'latest' | 'available' | 'error'>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
@@ -290,6 +291,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('pinarak_githubRepoUrl', githubRepoUrl);
   }, [githubRepoUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('pinarak_githubToken', githubToken);
+  }, [githubToken]);
 
   // Compute final compactness spacing mode
   const getCompactnessMode = (): 'standard' | 'compact' | 'super-compact' => {
@@ -646,20 +651,41 @@ export default function App() {
     if (!silent) triggerToast('Memeriksa pembaruan...', 'info');
 
     try {
-      const response = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/package.json`);
-      if (!response.ok) {
-        const fbResponse = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/package.json`);
-        if (!fbResponse.ok) throw new Error('Gagal mengunduh metadata update.');
-        const data = await fbResponse.json();
-        processUpdateData(data, silent);
-      } else {
-        const data = await response.json();
-        processUpdateData(data, silent);
+      const headers: HeadersInit = {
+        'Accept': 'application/vnd.github.v3.raw'
+      };
+      if (githubToken) {
+        headers['Authorization'] = `token ${githubToken}`;
       }
+
+      // Try fetching package.json from main branch via GitHub Contents API
+      let response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=main`, { headers });
+      if (!response.ok) {
+        // Fallback to master branch
+        response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=master`, { headers });
+        if (!response.ok) {
+          // If both Contents API fail, fallback to public raw.githubusercontent path
+          const rawResponse = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/package.json`);
+          if (!rawResponse.ok) {
+            const rawFbResponse = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/package.json`);
+            if (!rawFbResponse.ok) throw new Error('Gagal mengunduh metadata update dari API maupun raw.');
+            const data = await rawFbResponse.json();
+            processUpdateData(data, silent);
+            return;
+          } else {
+            const data = await rawResponse.json();
+            processUpdateData(data, silent);
+            return;
+          }
+        }
+      }
+      
+      const data = await response.json();
+      processUpdateData(data, silent);
     } catch (error) {
       console.error('Update check failed:', error);
       setUpdateStatus('error');
-      if (!silent) triggerToast('Gagal memeriksa pembaruan. Pastikan URL & internet aktif.', 'error');
+      if (!silent) triggerToast('Gagal memeriksa pembaruan. Pastikan token, URL & internet aktif.', 'error');
     }
   };
 
@@ -1448,6 +1474,20 @@ export default function App() {
                 />
                 <span className="text-[9px] text-slate-400 block mt-1 leading-relaxed">
                   Aplikasi akan memantau file `package.json` di repositori ini secara otomatis dan memperingatkan Anda jika ada perubahan versi.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">GitHub Personal Access Token (PAT)</label>
+                <input 
+                  type="password" 
+                  value={githubToken} 
+                  placeholder="ghp_xxxxxxxxxxxx"
+                  onChange={(e) => setGithubToken(e.target.value)}
+                  className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-800"
+                />
+                <span className="text-[9px] text-slate-400 block mt-1 leading-relaxed">
+                  Opsional. Diperlukan jika repositori Anda bersifat **Private** agar aplikasi bisa mengunduh informasi versi secara aman.
                 </span>
               </div>
               
