@@ -605,7 +605,7 @@ export default function App() {
   };
 
   // --- Update Checker Logic ---
-  const CURRENT_VERSION = '1.1.0';
+  const CURRENT_VERSION = '1.1.1';
 
   const isNewerVersion = (current: string, remote: string) => {
     const curParts = current.split('.').map(Number);
@@ -1587,6 +1587,9 @@ export default function App() {
                 {updateStatus === 'latest' && <span className="text-emerald-600 font-bold">Terbaru ✓</span>}
                 {updateStatus === 'available' && <span className="text-amber-600 font-bold">Ada Update!</span>}
                 {updateStatus === 'checking' && <span className="text-slate-400">Memeriksa...</span>}
+              </div>
+              <div className="text-[9px] text-slate-400 text-center mt-1">
+                Pinarak Villa Invoice Generator • Premium Edition
               </div>
             </div>
           </div>
