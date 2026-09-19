@@ -1,6 +1,6 @@
 {
   "name": "pinarak-invoice-generator",
-  "version": "1.1.3",
+  "version": "1.1.2",
   "description": "Premium Invoice Generator Desktop App",
   "main": "main.js",
   "scripts": {
@@ -20,6 +20,9 @@
   "author": "Pinarak Villa Management",
   "license": "ISC",
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "lucide-react": "^0.395.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

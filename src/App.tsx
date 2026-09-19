@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Plus, 
-  Trash2, 
-  Printer, 
-  Download, 
-  Settings, 
-  Palette, 
+import {
+  Trash2,
+  Printer,
+  Download,
+  Settings,
+  Palette,
   FileText,
   User,
   HelpCircle,
@@ -16,8 +15,60 @@ import {
   History,
   Save,
   FolderOpen,
-  FilePlus
+  FilePlus,
+  Building2,
+  Tent
 } from 'lucide-react';
+import type { BlockType, DpMode, InvoiceBlock, InvoiceType, Item, SavedInvoice, Theme, Toast } from './types';
+import { formatRupiah } from './utils/format';
+import { isNewerVersion } from './utils/version';
+import { buildInvoiceNo, calcDpFromPercent, calcSavedTotal, calcSubtotal, calcTotalBill } from './utils/invoice';
+import { migrateLegacyKeys } from './utils/storage';
+import { arrayMove } from '@dnd-kit/sortable';
+import { defaultLayoutFor, sanitizeLayout } from './blocks';
+import ItemsTableBlock from './components/blocks/ItemsTableBlock';
+import SignatureBlock from './components/blocks/SignatureBlock';
+import BlockOrderPanel from './components/BlockOrderPanel';
+
+migrateLegacyKeys();
+
+// Preset bawaan per tipe dokumen. Dipakai saat pertama beralih tipe dan
+// saat membuat invoice baru. Item & data pelanggan tidak pernah dioverwrite
+// oleh perpindahan tipe (hanya DP, notes, footer).
+const PRESET_NOTES: Record<'villa' | 'outbound', string[]> = {
+  villa: [
+    'DP tidak dapat direfund jika ada pembatalan sepihak.',
+    'Reschedule diperbolehkan maksimal 1x (paling lambat H-14 check-in).'
+  ],
+  outbound: [
+    'DP 50% sebagai tanda jadi, pelunasan maksimal H-7 sebelum acara.',
+    'Reschedule maksimal 1x (paling lambat H-7 sebelum acara).',
+    'Pembatalan sepihak H-7 dikenakan biaya 50% dari total tagihan.',
+    'Kegiatan dapat dihentikan sementara bila cuaca tidak memungkinkan (force majeure).'
+  ]
+};
+
+const PRESET_FOOTER: Record<'villa' | 'outbound', string> = {
+  villa: 'PELUNASAN WAJIB H-1 SEBELUM CHECK-IN',
+  outbound: 'PELUNASAN MAKSIMAL H-7 SEBELUM ACARA'
+};
+
+const PRESET_BUSINESS: Record<'villa' | 'outbound', { name: string; management: string; tagline: string; location: string }> = {
+  villa: {
+    name: 'PINARAK VILLA',
+    management: 'PINARAK VILLA MANAGEMENT',
+    tagline: 'SEWA VILLA NYAMAN — TERLENGKAP DI KOTA WISATA BATU',
+    location: 'KOTA BATU • JAWA TIMUR • INDONESIA',
+  },
+  outbound: {
+    name: 'PINARAK OUTBOUND',
+    management: 'PINARAK ADVENTURE & EVENT ORGANIZER',
+    tagline: 'TEAM BUILDING • FUN OUTBOUND • GATHERING & OUTING',
+    location: 'KOTA BATU • MALANG • JAWA TIMUR',
+  }
+};
+
+type DocType = Extract<InvoiceType, 'villa' | 'outbound'>;
 
 // TypeScript Declarations for Electron IPC
 declare global {
@@ -35,47 +86,6 @@ declare global {
       onDownloadProgress?: (callback: (percent: number) => void) => () => void;
     };
   }
-}
-
-interface Theme {
-  id: string;
-  name: string;
-  primary: string;
-  secondary: string;
-  accent: string;
-  bg: string;
-  text: string;
-  border: string;
-}
-
-
-
-interface Item {
-  id: string;
-  name: string;
-  price: number;
-  qty: number;
-}
-
-interface Toast {
-  message: string;
-  type: 'success' | 'error' | 'info';
-}
-
-interface SavedInvoice {
-  id: string;
-  invoiceNo: string;
-  customerName: string;
-  customerPhone: string;
-  checkInDate: string;
-  checkInTime: string;
-  checkOutDate: string;
-  checkOutTime: string;
-  items: Item[];
-  dpValue: number;
-  discountValue: number;
-  paymentMethod: string;
-  createdAt: string;
 }
 
 export default function App() {
@@ -129,7 +139,7 @@ export default function App() {
   
   // Theme state
   const [activeTheme, setActiveTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('pinarak_theme');
+    const saved = localStorage.getItem('universal_theme');
     if (saved) {
       const parsed = JSON.parse(saved);
       const match = themes.find(t => t.id === parsed.id);
@@ -139,58 +149,59 @@ export default function App() {
   });
 
   // Business Identity details
-  const [businessName, setBusinessName] = useState(() => localStorage.getItem('pinarak_businessName') || 'PINARAK VILLA');
-  const [businessManagement, setBusinessManagement] = useState(() => localStorage.getItem('pinarak_businessManagement') || 'PINARAK VILLA MANAGEMENT');
-  const [businessTagline, setBusinessTagline] = useState(() => localStorage.getItem('pinarak_businessTagline') || 'SEWA VILLA NYAMAN — TERLENGKAP DI KOTA WISATA BATU');
-  const [businessLocation, setBusinessLocation] = useState(() => localStorage.getItem('pinarak_businessLocation') || 'KOTA BATU • JAWA TIMUR • INDONESIA');
+  const [businessName, setBusinessName] = useState(() => localStorage.getItem('universal_businessName') || 'PINARAK VILLA');
+  const [businessManagement, setBusinessManagement] = useState(() => localStorage.getItem('universal_businessManagement') || 'PINARAK VILLA MANAGEMENT');
+  const [businessTagline, setBusinessTagline] = useState(() => localStorage.getItem('universal_businessTagline') || 'SEWA VILLA NYAMAN — TERLENGKAP DI KOTA WISATA BATU');
+  const [businessLocation, setBusinessLocation] = useState(() => localStorage.getItem('universal_businessLocation') || 'KOTA BATU • JAWA TIMUR • INDONESIA');
 
   // Logo Settings
-  const [logoMode, setLogoMode] = useState(() => localStorage.getItem('pinarak_logoMode') || 'double');
-  const [logoLeft, setLogoLeft] = useState<string | null>(() => localStorage.getItem('pinarak_logoLeft') || null);
-  const [logoRight, setLogoRight] = useState<string | null>(() => localStorage.getItem('pinarak_logoRight') || null);
+  const [logoMode, setLogoMode] = useState(() => localStorage.getItem('universal_logoMode') || 'double');
+  const [logoLeft, setLogoLeft] = useState<string | null>(() => localStorage.getItem('universal_logoLeft') || null);
+  const [logoRight, setLogoRight] = useState<string | null>(() => localStorage.getItem('universal_logoRight') || null);
   const [useSameLogo, setUseSameLogo] = useState<boolean>(() => {
-    const saved = localStorage.getItem('pinarak_useSameLogo');
+    const saved = localStorage.getItem('universal_useSameLogo');
     return saved !== null ? JSON.parse(saved) : true;
   });
 
   // Bank Info details
-  const [bankName, setBankName] = useState(() => localStorage.getItem('pinarak_bankName') || 'BCA (Bank Central Asia)');
-  const [bankNumber, setBankNumber] = useState(() => localStorage.getItem('pinarak_bankNumber') || '816-091-XXXX');
-  const [bankHolder, setBankHolder] = useState(() => localStorage.getItem('pinarak_bankHolder') || 'Ivan Adiluhung');
+  const [bankName, setBankName] = useState(() => localStorage.getItem('universal_bankName') || 'BCA (Bank Central Asia)');
+  const [bankNumber, setBankNumber] = useState(() => localStorage.getItem('universal_bankNumber') || '816-091-XXXX');
+  const [bankHolder, setBankHolder] = useState(() => localStorage.getItem('universal_bankHolder') || 'Ivan Adiluhung');
 
   // Custom policies notes
   const [notes, setNotes] = useState<string[]>(() => {
-    const saved = localStorage.getItem('pinarak_notes');
-    return saved ? JSON.parse(saved) : [
-      'DP tidak dapat direfund jika ada pembatalan sepihak.',
-      'Reschedule diperbolehkan maksimal 1x (paling lambat H-14 check-in).'
-    ];
+    const saved = localStorage.getItem('universal_notes');
+    return saved ? JSON.parse(saved) : [...PRESET_NOTES.villa];
   });
 
-  const [footerBannerText, setFooterBannerText] = useState(() => localStorage.getItem('pinarak_footerBannerText') || 'PELUNASAN WAJIB H-1 SEBELUM CHECK-IN');
+  const [footerBannerText, setFooterBannerText] = useState(() => localStorage.getItem('universal_footerBannerText') || PRESET_FOOTER.villa);
 
   // --- States for History & Drafts ---
   const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>(() => {
-    const saved = localStorage.getItem('pinarak_savedInvoices');
+    const saved = localStorage.getItem('universal_savedInvoices');
     return saved ? JSON.parse(saved) : [];
   });
   const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(() => {
-    return localStorage.getItem('pinarak_activeInvoiceId') || null;
+    return localStorage.getItem('universal_activeInvoiceId') || null;
   });
 
   // Transactional details with draft persistence (fallback to defaults if no draft)
-  const [customerName, setCustomerName] = useState(() => localStorage.getItem('pinarak_draft_customerName') || 'Bpk. Budi Sentosa');
-  const [customerPhone, setCustomerPhone] = useState(() => localStorage.getItem('pinarak_draft_customerPhone') || '0812-3456-7890');
-  const [invoiceNo, setInvoiceNo] = useState(() => localStorage.getItem('pinarak_draft_invoiceNo') || `INV/${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}/012`);
-  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('pinarak_draft_paymentMethod') || 'Transfer BCA');
+  const [customerName, setCustomerName] = useState(() => localStorage.getItem('universal_draft_customerName') || 'Bpk. Budi Sentosa');
+  const [customerPhone, setCustomerPhone] = useState(() => localStorage.getItem('universal_draft_customerPhone') || '0812-3456-7890');
+  const [invoiceNo, setInvoiceNo] = useState(() => localStorage.getItem('universal_draft_invoiceNo') || `INV/${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}/012`);
+  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('universal_draft_paymentMethod') || 'Transfer BCA');
 
-  const [checkInDate, setCheckInDate] = useState(() => localStorage.getItem('pinarak_draft_checkInDate') || '2026-06-15');
-  const [checkInTime, setCheckInTime] = useState(() => localStorage.getItem('pinarak_draft_checkInTime') || '14:00');
-  const [checkOutDate, setCheckOutDate] = useState(() => localStorage.getItem('pinarak_draft_checkOutDate') || '2026-06-17');
-  const [checkOutTime, setCheckOutTime] = useState(() => localStorage.getItem('pinarak_draft_checkOutTime') || '11:00');
+  const [checkInDate, setCheckInDate] = useState(() => localStorage.getItem('universal_draft_checkInDate') || '2026-06-15');
+  const [checkInTime, setCheckInTime] = useState(() => localStorage.getItem('universal_draft_checkInTime') || '14:00');
+  const [checkOutDate, setCheckOutDate] = useState(() => localStorage.getItem('universal_draft_checkOutDate') || '2026-06-17');
+  const [checkOutTime, setCheckOutTime] = useState(() => localStorage.getItem('universal_draft_checkOutTime') || '11:00');
+
+  // Khusus Outbound: Lokasi Acara & Estimasi Jumlah Peserta
+  const [eventLocation, setEventLocation] = useState(() => localStorage.getItem('universal_draft_eventLocation') || 'Coban Rondo, Kota Batu');
+  const [participantCount, setParticipantCount] = useState(() => localStorage.getItem('universal_draft_participantCount') || '50 Pax');
 
   const [items, setItems] = useState<Item[]>(() => {
-    const saved = localStorage.getItem('pinarak_draft_items');
+    const saved = localStorage.getItem('universal_draft_items');
     return saved ? JSON.parse(saved) : [
       { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
       { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
@@ -199,12 +210,21 @@ export default function App() {
   });
 
   const [dpValue, setDpValue] = useState(() => {
-    const saved = localStorage.getItem('pinarak_draft_dpValue');
+    const saved = localStorage.getItem('universal_draft_dpValue');
     return saved !== null ? Number(saved) : 1500000;
   });
   const [discountValue, setDiscountValue] = useState(() => {
-    const saved = localStorage.getItem('pinarak_draft_discountValue');
+    const saved = localStorage.getItem('universal_draft_discountValue');
     return saved !== null ? Number(saved) : 200000;
+  });
+
+  // DP: 'nominal' (Rp langsung, perilaku lama) atau 'percent' (% dari subtotal-diskon, untuk termin EO)
+  const [dpMode, setDpMode] = useState<DpMode>(() => {
+    return (localStorage.getItem('universal_draft_dpMode') as DpMode) || 'nominal';
+  });
+  const [dpPercent, setDpPercent] = useState(() => {
+    const saved = localStorage.getItem('universal_draft_dpPercent');
+    return saved !== null ? Number(saved) : 50;
   });
 
   const [newNote, setNewNote] = useState('');
@@ -212,7 +232,7 @@ export default function App() {
   const [toast, setToast] = useState<Toast | null>(null);
 
   // --- Update Checker States ---
-  const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('pinarak_githubRepoUrl') || 'https://github.com/Riski4797/invoice_generator');
+  const [githubRepoUrl, setGithubRepoUrl] = useState(() => localStorage.getItem('universal_githubRepoUrl') || 'https://github.com/Riski4797/invoice_generator');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'latest' | 'available' | 'error'>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
@@ -223,78 +243,104 @@ export default function App() {
 
   // --- Spacing Spacers & Compactness States ---
   const [autoFitSpacing, setAutoFitSpacing] = useState<boolean>(() => {
-    const saved = localStorage.getItem('pinarak_autoFitSpacing');
+    const saved = localStorage.getItem('universal_autoFitSpacing');
     return saved !== null ? JSON.parse(saved) : true;
   });
   const [manualSpacingMode, setManualSpacingMode] = useState<'standard' | 'compact' | 'super-compact'>(() => {
-    return (localStorage.getItem('pinarak_manualSpacingMode') as 'standard' | 'compact' | 'super-compact') || 'standard';
+    return (localStorage.getItem('universal_manualSpacingMode') as 'standard' | 'compact' | 'super-compact') || 'standard';
+  });
+
+  // --- Tipe dokumen aktif: villa <-> outbound (EO team building) ---
+  const [invoiceType, setInvoiceType] = useState<DocType>(() => {
+    return localStorage.getItem('universal_invoice_type') === 'outbound' ? 'outbound' : 'villa';
+  });
+
+  // --- Susunan blok kertas A4 (urutan drag-n-drop + visibilitas, per tipe) ---
+  const [layout, setLayout] = useState<InvoiceBlock[]>(() => {
+    const t: DocType = localStorage.getItem('universal_invoice_type') === 'outbound' ? 'outbound' : 'villa';
+    try {
+      const saved = localStorage.getItem(`universal_layout_${t}`);
+      if (saved) return sanitizeLayout(JSON.parse(saved), defaultLayoutFor(t));
+    } catch {
+      // abaikan data rusak, pakai default
+    }
+    return defaultLayoutFor(t);
   });
 
   // --- Effects to Auto-save Configuration Variables ---
   useEffect(() => {
-    localStorage.setItem('pinarak_savedInvoices', JSON.stringify(savedInvoices));
+    localStorage.setItem('universal_savedInvoices', JSON.stringify(savedInvoices));
   }, [savedInvoices]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_activeInvoiceId', activeInvoiceId || '');
+    localStorage.setItem('universal_activeInvoiceId', activeInvoiceId || '');
   }, [activeInvoiceId]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_draft_customerName', customerName);
-    localStorage.setItem('pinarak_draft_customerPhone', customerPhone);
-    localStorage.setItem('pinarak_draft_invoiceNo', invoiceNo);
-    localStorage.setItem('pinarak_draft_paymentMethod', paymentMethod);
-    localStorage.setItem('pinarak_draft_checkInDate', checkInDate);
-    localStorage.setItem('pinarak_draft_checkInTime', checkInTime);
-    localStorage.setItem('pinarak_draft_checkOutDate', checkOutDate);
-    localStorage.setItem('pinarak_draft_checkOutTime', checkOutTime);
-    localStorage.setItem('pinarak_draft_items', JSON.stringify(items));
-    localStorage.setItem('pinarak_draft_dpValue', String(dpValue));
-    localStorage.setItem('pinarak_draft_discountValue', String(discountValue));
-  }, [customerName, customerPhone, invoiceNo, paymentMethod, checkInDate, checkInTime, checkOutDate, checkOutTime, items, dpValue, discountValue]);
+    localStorage.setItem('universal_draft_customerName', customerName);
+    localStorage.setItem('universal_draft_customerPhone', customerPhone);
+    localStorage.setItem('universal_draft_invoiceNo', invoiceNo);
+    localStorage.setItem('universal_draft_paymentMethod', paymentMethod);
+    localStorage.setItem('universal_draft_checkInDate', checkInDate);
+    localStorage.setItem('universal_draft_checkInTime', checkInTime);
+    localStorage.setItem('universal_draft_checkOutDate', checkOutDate);
+    localStorage.setItem('universal_draft_checkOutTime', checkOutTime);
+    localStorage.setItem('universal_draft_items', JSON.stringify(items));
+    localStorage.setItem('universal_draft_dpValue', String(dpValue));
+    localStorage.setItem('universal_draft_discountValue', String(discountValue));
+    localStorage.setItem('universal_draft_dpMode', dpMode);
+    localStorage.setItem('universal_draft_dpPercent', String(dpPercent));
+    localStorage.setItem('universal_draft_eventLocation', eventLocation);
+    localStorage.setItem('universal_draft_participantCount', participantCount);
+  }, [customerName, customerPhone, invoiceNo, paymentMethod, checkInDate, checkInTime, checkOutDate, checkOutTime, items, dpValue, discountValue, dpMode, dpPercent, eventLocation, participantCount]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_theme', JSON.stringify(activeTheme));
+    localStorage.setItem('universal_theme', JSON.stringify(activeTheme));
   }, [activeTheme]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_businessName', businessName);
-    localStorage.setItem('pinarak_businessManagement', businessManagement);
-    localStorage.setItem('pinarak_businessTagline', businessTagline);
-    localStorage.setItem('pinarak_businessLocation', businessLocation);
+    localStorage.setItem('universal_businessName', businessName);
+    localStorage.setItem('universal_businessManagement', businessManagement);
+    localStorage.setItem('universal_businessTagline', businessTagline);
+    localStorage.setItem('universal_businessLocation', businessLocation);
   }, [businessName, businessManagement, businessTagline, businessLocation]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_logoMode', logoMode);
-    localStorage.setItem('pinarak_logoLeft', logoLeft || '');
-    localStorage.setItem('pinarak_logoRight', logoRight || '');
-    localStorage.setItem('pinarak_useSameLogo', JSON.stringify(useSameLogo));
+    localStorage.setItem('universal_logoMode', logoMode);
+    localStorage.setItem('universal_logoLeft', logoLeft || '');
+    localStorage.setItem('universal_logoRight', logoRight || '');
+    localStorage.setItem('universal_useSameLogo', JSON.stringify(useSameLogo));
   }, [logoMode, logoLeft, logoRight, useSameLogo]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_bankName', bankName);
-    localStorage.setItem('pinarak_bankNumber', bankNumber);
-    localStorage.setItem('pinarak_bankHolder', bankHolder);
+    localStorage.setItem('universal_bankName', bankName);
+    localStorage.setItem('universal_bankNumber', bankNumber);
+    localStorage.setItem('universal_bankHolder', bankHolder);
   }, [bankName, bankNumber, bankHolder]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_notes', JSON.stringify(notes));
+    localStorage.setItem('universal_notes', JSON.stringify(notes));
   }, [notes]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_footerBannerText', footerBannerText);
+    localStorage.setItem('universal_footerBannerText', footerBannerText);
   }, [footerBannerText]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_autoFitSpacing', JSON.stringify(autoFitSpacing));
+    localStorage.setItem('universal_autoFitSpacing', JSON.stringify(autoFitSpacing));
   }, [autoFitSpacing]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_manualSpacingMode', manualSpacingMode);
+    localStorage.setItem('universal_manualSpacingMode', manualSpacingMode);
   }, [manualSpacingMode]);
 
   useEffect(() => {
-    localStorage.setItem('pinarak_githubRepoUrl', githubRepoUrl);
+    localStorage.setItem('universal_invoice_type', invoiceType);
+    localStorage.setItem(`universal_layout_${invoiceType}`, JSON.stringify(layout));
+  }, [layout, invoiceType]);
+
+  useEffect(() => {
+    localStorage.setItem('universal_githubRepoUrl', githubRepoUrl);
   }, [githubRepoUrl]);
 
   // Compute final compactness spacing mode
@@ -312,6 +358,12 @@ export default function App() {
   };
 
   const spacingMode = getCompactnessMode();
+
+  // Teks adaptif per tipe (villa memakai istilah sewa, outbound memakai istilah kegiatan)
+  const isOutbound = invoiceType === 'outbound';
+  const qtyHeader = isOutbound ? 'Qty' : 'Qty / Malam';
+  const descHeader = isOutbound ? 'Deskripsi Paket / Layanan' : 'Deskripsi Sewa / Layanan';
+  const addItemLabel = isOutbound ? 'Tambah Baris Paket / Add-on' : 'Tambah Baris Baru / Layanan Extra';
 
   // Helper classes for responsive A4 spacing to force 1-page fit
   const spacingStyles = {
@@ -397,6 +449,75 @@ export default function App() {
     }
   };
 
+  // --- Helpers susunan blok (urutan = flex order di kertas, cetak mengikuti) ---
+  const blockOrder = (type: BlockType): number => layout.findIndex((b) => b.type === type);
+  const isBlockVisible = (type: BlockType): boolean =>
+    layout.find((b) => b.type === type)?.visible !== false;
+
+  const handleReorderBlocks = (activeId: string, overId: string) => {
+    setLayout((prev) => {
+      const from = prev.findIndex((b) => b.id === activeId);
+      const to = prev.findIndex((b) => b.id === overId);
+      if (from < 0 || to < 0) return prev;
+      return arrayMove(prev, from, to);
+    });
+  };
+
+  const handleToggleBlock = (id: string) => {
+    setLayout((prev) => prev.map((b) => (b.id === id ? { ...b, visible: !b.visible } : b)));
+  };
+
+  const handleResetLayout = () => {
+    setLayout(defaultLayoutFor(invoiceType));
+    triggerToast('Susunan blok dikembalikan ke default', 'info');
+  };
+
+  // Preset profil bisnis 1-klik (nama brand, manajemen, tagline, lokasi)
+  const applyBusinessPreset = (t: DocType) => {
+    const p = PRESET_BUSINESS[t];
+    setBusinessName(p.name);
+    setBusinessManagement(p.management);
+    setBusinessTagline(p.tagline);
+    setBusinessLocation(p.location);
+    triggerToast(`Profil bisnis ${t === 'outbound' ? 'Outbound & EO' : 'Villa'} diterapkan!`, 'success');
+  };
+
+  // Preset data per tipe (DP, notes, footer). Item & pelanggan tidak disentuh.
+  const applyTypePreset = (t: DocType) => {
+    if (t === 'outbound') {
+      setDpMode('percent');
+      setDpPercent(50);
+      setNotes(PRESET_NOTES.outbound);
+      setFooterBannerText(PRESET_FOOTER.outbound);
+      setEventLocation('Coban Rondo, Kota Batu');
+      setParticipantCount('50 Pax');
+    } else {
+      setDpMode('nominal');
+      setNotes(PRESET_NOTES.villa);
+      setFooterBannerText(PRESET_FOOTER.villa);
+    }
+  };
+
+  // Beralih tipe: tukar layout tersimpan per tipe. Preset data hanya diterapkan
+  // pada pemakaian pertama tipe tersebut (belum ada layout tersimpan).
+  const handleSwitchType = (t: DocType) => {
+    if (t === invoiceType) return;
+    setInvoiceType(t);
+    const stored = localStorage.getItem(`universal_layout_${t}`);
+    if (stored) {
+      try {
+        setLayout(sanitizeLayout(JSON.parse(stored), defaultLayoutFor(t)));
+      } catch {
+        setLayout(defaultLayoutFor(t));
+      }
+      triggerToast(t === 'outbound' ? 'Beralih ke invoice Outbound / EO' : 'Beralih ke invoice Villa', 'info');
+    } else {
+      setLayout(defaultLayoutFor(t));
+      applyTypePreset(t);
+      triggerToast(t === 'outbound' ? 'Preset Outbound / EO diterapkan' : 'Preset Villa diterapkan', 'success');
+    }
+  };
+
   // Synchronize logoRight with logoLeft if same-logo configuration is active
   useEffect(() => {
     if (useSameLogo && logoLeft) {
@@ -412,19 +533,11 @@ export default function App() {
     }, 4500);
   };
 
-  // Convert numbers to Rupiah currency format
-  const formatRupiah = (number: number) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(number);
-  };
-
-  // Financial calculations
-  const subtotal = items.reduce((acc, item) => acc + (item.price * item.qty), 0);
-  const totalBill = subtotal - dpValue - discountValue;
+  // Financial calculations (logika murni di src/utils/invoice.ts)
+  const subtotal = calcSubtotal(items);
+  const dpBase = subtotal - discountValue;
+  const dpEffective = dpMode === 'percent' ? calcDpFromPercent(dpBase, dpPercent) : dpValue;
+  const totalBill = calcTotalBill(subtotal, dpEffective, discountValue);
 
   // Custom logo upload handlers
   const handleLogoLeftUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -478,7 +591,7 @@ export default function App() {
   const addItem = (name = '', price = 0) => {
     const newItem: Item = {
       id: Date.now().toString(),
-      name: name || 'Nama Villa / Layanan Baru',
+      name: name || (isOutbound ? 'Paket / Add-on Baru' : 'Nama Villa / Layanan Baru'),
       price: price || 0,
       qty: 1
     };
@@ -605,19 +718,7 @@ export default function App() {
   };
 
   // --- Update Checker Logic ---
-  const CURRENT_VERSION = '1.1.3';
-
-  const isNewerVersion = (current: string, remote: string) => {
-    const curParts = current.split('.').map(Number);
-    const remParts = remote.split('.').map(Number);
-    for (let i = 0; i < 3; i++) {
-      const curVal = curParts[i] || 0;
-      const remVal = remParts[i] || 0;
-      if (remVal > curVal) return true;
-      if (remVal < curVal) return false;
-    }
-    return false;
-  };
+  const CURRENT_VERSION = '1.1.2';
 
   const processUpdateData = (data: any, silent: boolean) => {
     const remoteVersion = data.version;
@@ -750,7 +851,7 @@ export default function App() {
 
   // Check silently on startup if repository URL is set
   useEffect(() => {
-    const savedUrl = localStorage.getItem('pinarak_githubRepoUrl');
+    const savedUrl = localStorage.getItem('universal_githubRepoUrl');
     if (savedUrl) {
       setTimeout(() => {
         checkUpdates(true);
@@ -760,27 +861,46 @@ export default function App() {
 
   // --- Handlers for Invoice History (Riwayat Invoice) ---
   const handleNewInvoice = () => {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const seq = String(savedInvoices.length + 1).padStart(3, '0');
-    
-    setInvoiceNo(`INV/${year}${month}/${seq}`);
-    setCustomerName('Bpk. Budi Sentosa');
-    setCustomerPhone('0812-3456-7890');
-    setPaymentMethod('Transfer BCA');
-    setCheckInDate('2026-06-15');
-    setCheckInTime('14:00');
-    setCheckOutDate('2026-06-17');
-    setCheckOutTime('11:00');
-    setItems([
-      { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
-      { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
-      { id: '3', name: 'Sewa Alat BBQ Arang Set', price: 250000, qty: 1 }
-    ]);
-    setDpValue(1500000);
-    setDiscountValue(200000);
+    const now = new Date();
+    setInvoiceNo(buildInvoiceNo(now.getFullYear(), now.getMonth() + 1, savedInvoices.length + 1));
     setActiveInvoiceId(null);
-    triggerToast('Form baru telah disiapkan.', 'info');
+    if (isOutbound) {
+      setCustomerName('PT. Maju Bersama');
+      setCustomerPhone('0812-0000-0000');
+      setPaymentMethod('Transfer Bank');
+      setEventLocation('Coban Rondo, Kota Batu');
+      setParticipantCount('50 Pax');
+      setItems([
+        { id: '1', name: 'Paket Fun Outbound Team Building', price: 150000, qty: 50, unit: 'pax' },
+        { id: '2', name: 'Dokumentasi Foto & Video', price: 1500000, qty: 1, unit: 'paket' },
+        { id: '3', name: 'Sound System & MC Acara', price: 1000000, qty: 1, unit: 'paket' }
+      ]);
+      setDpMode('percent');
+      setDpPercent(50);
+      setDiscountValue(0);
+      setNotes([...PRESET_NOTES.outbound]);
+      setFooterBannerText(PRESET_FOOTER.outbound);
+      triggerToast('Form invoice Outbound baru disiapkan.', 'info');
+    } else {
+      setCustomerName('Bpk. Budi Sentosa');
+      setCustomerPhone('0812-3456-7890');
+      setPaymentMethod('Transfer BCA');
+      setCheckInDate('2026-06-15');
+      setCheckInTime('14:00');
+      setCheckOutDate('2026-06-17');
+      setCheckOutTime('11:00');
+      setItems([
+        { id: '1', name: 'Pinarak Villa Premium (Private Pool & Jacuzzi)', price: 3500000, qty: 2 },
+        { id: '2', name: 'Extra Bed Premium Set', price: 150000, qty: 2 },
+        { id: '3', name: 'Sewa Alat BBQ Arang Set', price: 250000, qty: 1 }
+      ]);
+      setDpValue(1500000);
+      setDpMode('nominal');
+      setDiscountValue(200000);
+      setNotes([...PRESET_NOTES.villa]);
+      setFooterBannerText(PRESET_FOOTER.villa);
+      triggerToast('Form baru telah disiapkan.', 'info');
+    }
   };
 
   const handleSaveInvoice = () => {
@@ -808,9 +928,14 @@ export default function App() {
       checkOutTime,
       items,
       dpValue,
+      dpMode,
+      dpPercent,
       discountValue,
       paymentMethod,
-      createdAt: timestamp
+      createdAt: timestamp,
+      invoiceType,
+      eventLocation,
+      participantCount
     };
 
     if (activeInvoiceId) {
@@ -833,8 +958,15 @@ export default function App() {
     setCheckOutTime(inv.checkOutTime);
     setItems(inv.items);
     setDpValue(inv.dpValue);
+    setDpMode(inv.dpMode ?? 'nominal');
+    setDpPercent(inv.dpPercent ?? 50);
     setDiscountValue(inv.discountValue);
     setPaymentMethod(inv.paymentMethod);
+    if (inv.eventLocation !== undefined) setEventLocation(inv.eventLocation);
+    if (inv.participantCount !== undefined) setParticipantCount(inv.participantCount);
+    if (inv.invoiceType && (inv.invoiceType === 'villa' || inv.invoiceType === 'outbound')) {
+      setInvoiceType(inv.invoiceType);
+    }
     setActiveInvoiceId(inv.id);
     triggerToast(`Invoice ${inv.invoiceNo} berhasil dimuat!`);
   };
@@ -1205,6 +1337,51 @@ export default function App() {
             </div>
           </div>
 
+          {/* Tipe Invoice: Villa <-> Outbound */}
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200 print-hidden">
+            <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-1 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-slate-500" />
+              Tipe Invoice
+            </h2>
+            <p className="text-[10px] text-slate-500 mb-3">
+              Menukar susunan blok + preset (layout tersimpan per tipe, data item tidak diubah).
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleSwitchType('villa')}
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border text-xs font-bold transition ${
+                  !isOutbound
+                    ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800 text-slate-900'
+                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                <Building2 className="w-5 h-5" />
+                Villa
+                <span className="text-[9px] font-medium text-slate-400">Sewa & reservasi</span>
+              </button>
+              <button
+                onClick={() => handleSwitchType('outbound')}
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border text-xs font-bold transition ${
+                  isOutbound
+                    ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800 text-slate-900'
+                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                <Tent className="w-5 h-5" />
+                Outbound
+                <span className="text-[9px] font-medium text-slate-400">Team building / EO</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Susunan Blok Kertas (drag-n-drop order + visibilitas) */}
+          <BlockOrderPanel
+            layout={layout}
+            onReorder={handleReorderBlocks}
+            onToggle={handleToggleBlock}
+            onReset={handleResetLayout}
+          />
+
           {/* Preset Tampilan Warna */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
             <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
@@ -1234,10 +1411,26 @@ export default function App() {
 
           {/* Informasi Bisnis / Pengelola */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-            <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
+            <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-2 flex items-center gap-2">
               <Settings className="w-4 h-4 text-slate-500" />
               Identitas Pengelola
             </h2>
+            <div className="flex items-center gap-1.5 mb-3">
+              <button
+                type="button"
+                onClick={() => applyBusinessPreset('villa')}
+                className="flex-1 py-1 px-2 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-50 text-slate-600 transition"
+              >
+                🏢 Profil Villa
+              </button>
+              <button
+                type="button"
+                onClick={() => applyBusinessPreset('outbound')}
+                className="flex-1 py-1 px-2 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-50 text-slate-600 transition"
+              >
+                🏕️ Profil Outbound
+              </button>
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Nama Brand Utama</label>
@@ -1282,12 +1475,12 @@ export default function App() {
           <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
             <h2 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-4 flex items-center gap-2">
               <User className="w-4 h-4 text-slate-500" />
-              Detail Reservasi
+              {isOutbound ? 'Detail Kegiatan' : 'Detail Reservasi'}
             </h2>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Nama Tamu</label>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">{isOutbound ? 'Klien / PIC' : 'Nama Tamu'}</label>
                   <input 
                     type="text" 
                     value={customerName} 
@@ -1327,43 +1520,94 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="border-t border-slate-100 pt-3">
-                <span className="text-xs font-semibold text-slate-600 block mb-2">Tanggal Menginap</span>
-                <div className="grid grid-cols-2 gap-2">
+              {isOutbound ? (
+                <div className="border-t border-slate-100 pt-3 space-y-3">
                   <div>
-                    <label className="block text-[10px] text-slate-400">Check-In</label>
-                    <input 
-                      type="date" 
-                      value={checkInDate} 
-                      onChange={(e) => setCheckInDate(e.target.value)}
-                      className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
-                    />
-                    <input 
-                      type="text" 
-                      value={checkInTime} 
-                      placeholder="14:00"
-                      onChange={(e) => setCheckInTime(e.target.value)}
-                      className="w-full text-xs px-2 py-1 border border-slate-200 rounded mt-1 text-center"
-                    />
+                    <span className="text-xs font-semibold text-slate-600 block mb-2">Tanggal & Periode Kegiatan</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Mulai Acara</label>
+                        <input
+                          type="date"
+                          value={checkInDate}
+                          onChange={(e) => setCheckInDate(e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Selesai Acara</label>
+                        <input
+                          type="date"
+                          value={checkOutDate}
+                          onChange={(e) => setCheckOutDate(e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-400">Check-Out</label>
-                    <input 
-                      type="date" 
-                      value={checkOutDate} 
-                      onChange={(e) => setCheckOutDate(e.target.value)}
-                      className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
-                    />
-                    <input 
-                      type="text" 
-                      value={checkOutTime} 
-                      placeholder="11:00"
-                      onChange={(e) => setCheckOutTime(e.target.value)}
-                      className="w-full text-xs px-2 py-1 border border-slate-200 rounded mt-1 text-center"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">Lokasi / Venue</label>
+                      <input
+                        type="text"
+                        value={eventLocation}
+                        onChange={(e) => setEventLocation(e.target.value)}
+                        placeholder="Coban Rondo, Batu"
+                        className="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">Estimasi Peserta</label>
+                      <input
+                        type="text"
+                        value={participantCount}
+                        onChange={(e) => setParticipantCount(e.target.value)}
+                        placeholder="50 Pax"
+                        className="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="border-t border-slate-100 pt-3">
+                  <span className="text-xs font-semibold text-slate-600 block mb-2">Tanggal Menginap</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-400">Check-In</label>
+                      <input
+                        type="date"
+                        value={checkInDate}
+                        onChange={(e) => setCheckInDate(e.target.value)}
+                        className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={checkInTime}
+                        placeholder="14:00"
+                        onChange={(e) => setCheckInTime(e.target.value)}
+                        className="w-full text-xs px-2 py-1 border border-slate-200 rounded mt-1 text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400">Check-Out</label>
+                      <input
+                        type="date"
+                        value={checkOutDate}
+                        onChange={(e) => setCheckOutDate(e.target.value)}
+                        className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={checkOutTime}
+                        placeholder="11:00"
+                        onChange={(e) => setCheckOutTime(e.target.value)}
+                        className="w-full text-xs px-2 py-1 border border-slate-200 rounded mt-1 text-center"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1484,7 +1728,7 @@ export default function App() {
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                   {savedInvoices.map((inv) => {
                     const isActive = activeInvoiceId === inv.id;
-                    const invoiceTotal = inv.items.reduce((sum, item) => sum + (item.price * item.qty), 0) - inv.dpValue - inv.discountValue;
+                    const invoiceTotal = calcSavedTotal(inv);
                     return (
                       <div
                         key={inv.id}
@@ -1628,12 +1872,12 @@ export default function App() {
             <div className="absolute top-[-120px] right-[-120px] w-[350px] h-[350px] rounded-full opacity-[0.03] pointer-events-none" style={{ border: `45px solid ${activeTheme.primary}` }}></div>
             <div className="absolute bottom-[-150px] left-[-150px] w-[350px] h-[350px] rounded-full opacity-[0.02] pointer-events-none" style={{ border: `30px solid ${activeTheme.secondary}` }}></div>
 
-            <div>
-              
+            <div className="flex flex-col">
+
               {/* KOP SURAT (DENGAN LAYOUT DINAMIS: 1 LOGO vs 2 LOGO) */}
               {logoMode === 'double' ? (
                 /* ================= MODE 2 LOGO (MENGAPIT) ================= */
-                <div className={`flex items-center justify-between w-full gap-2 border-b border-slate-100 ${spacingStyles.kop[spacingMode]}`}>
+                <div className={`flex items-center justify-between w-full gap-2 border-b border-slate-100 ${spacingStyles.kop[spacingMode]}${isBlockVisible('kop') ? '' : ' hidden'}`} style={{ order: blockOrder('kop') }}>
                   
                   {/* Logo Kiri */}
                   <div className="w-1/4 flex justify-start items-center">
@@ -1696,7 +1940,7 @@ export default function App() {
                 </div>
               ) : (
                 /* ================= MODE 1 LOGO (TENGAH) ================= */
-                <div className={`flex flex-col items-center text-center border-b border-slate-100 ${spacingStyles.kop[spacingMode]}`}>
+                <div className={`flex flex-col items-center text-center border-b border-slate-100 ${spacingStyles.kop[spacingMode]}${isBlockVisible('kop') ? '' : ' hidden'}`} style={{ order: blockOrder('kop') }}>
                   <div className="mb-3">
                     {logoLeft ? (
                       <img src={logoLeft} alt="Logo Center" className={`w-auto object-contain ${spacingStyles.logoSingle[spacingMode]}`} />
@@ -1747,20 +1991,20 @@ export default function App() {
               )}
 
               {/* JUDUL SELEMBAR INVOICE */}
-              <div className={`text-center border-y border-slate-100 relative ${spacingStyles.title[spacingMode]}`}>
+              <div className={`text-center border-y border-slate-100 relative ${spacingStyles.title[spacingMode]}${isBlockVisible('title') ? '' : ' hidden'}`} style={{ order: blockOrder('title') }}>
                 <h2 className="text-xl font-bold tracking-widest text-slate-800">INVOICE</h2>
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1" style={{ backgroundColor: activeTheme.primary }}></div>
               </div>
 
-              {/* DATA TAMU & SPESIFIKASI RESERVASI */}
-              <div className={`grid grid-cols-2 text-slate-700 ${spacingStyles.reservation[spacingMode]}`}>
+              {/* DATA TAMU & SPESIFIKASI RESERVASI / KEGIATAN */}
+              <div className={`grid grid-cols-2 text-slate-700 ${spacingStyles.reservation[spacingMode]}${isBlockVisible('customer') ? '' : ' hidden'}`} style={{ order: blockOrder('customer') }}>
                 
-                {/* Panel Kiri: Identitas Customer */}
+                {/* Panel Kiri: Identitas Customer / Klien */}
                 <div className={`space-y-2 rounded-lg border border-slate-100 ${spacingStyles.bankBox[spacingMode]}`}>
                   <table className="w-full table-fixed">
                     <tbody>
                       <tr>
-                        <td className={`w-28 font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>NAMA TAMU</td>
+                        <td className={`w-28 font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>{isOutbound ? 'KLIEN / INSTANSI' : 'NAMA TAMU'}</td>
                         <td className={`w-4 text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
                         <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
                           <input 
@@ -1772,7 +2016,7 @@ export default function App() {
                         </td>
                       </tr>
                       <tr>
-                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>NO. HP</td>
+                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>{isOutbound ? 'NO. HP / PIC' : 'NO. HP'}</td>
                         <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
                         <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
                           <input 
@@ -1783,22 +2027,50 @@ export default function App() {
                           />
                         </td>
                       </tr>
-                      <tr>
-                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>CHECK-IN</td>
-                        <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
-                        <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
-                          {new Date(checkInDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}
-                          <span className="text-xs font-normal text-slate-500 ml-1">({checkInTime} WIB)</span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>CHECK-OUT</td>
-                        <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
-                        <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
-                          {new Date(checkOutDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}
-                          <span className="text-xs font-normal text-slate-500 ml-1">({checkOutTime} WIB)</span>
-                        </td>
-                      </tr>
+                      {isOutbound ? (
+                        <>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>TGL ACARA</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              {new Date(checkInDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'})}
+                              {checkInDate !== checkOutDate && ` s/d ${new Date(checkOutDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'})}`}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>LOKASI ACARA</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              <input
+                                type="text"
+                                value={eventLocation}
+                                onChange={(e) => setEventLocation(e.target.value)}
+                                className="w-full font-semibold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-200 rounded px-1 print-input-hide"
+                              />
+                              <span className="print-value font-semibold text-slate-800">{eventLocation}</span>
+                            </td>
+                          </tr>
+                        </>
+                      ) : (
+                        <>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>CHECK-IN</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              {new Date(checkInDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}
+                              <span className="text-xs font-normal text-slate-500 ml-1">({checkInTime} WIB)</span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>CHECK-OUT</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              {new Date(checkOutDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}
+                              <span className="text-xs font-normal text-slate-500 ml-1">({checkOutTime} WIB)</span>
+                            </td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1831,120 +2103,77 @@ export default function App() {
                           />
                         </td>
                       </tr>
-                      <tr>
-                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>DURASI SEWA</td>
-                        <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
-                        <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
-                          {Math.max(1, Math.round((new Date(checkOutDate).getTime() - new Date(checkInDate).getTime()) / (1000 * 60 * 60 * 24)))} Malam
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>STATUS RESERVASI</td>
-                        <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
-                        <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
-                          <span className="inline-block px-2.5 py-0.5 text-[10px] font-bold rounded animate-pulse" style={{ backgroundColor: activeTheme.accent, color: activeTheme.primary }}>
-                            RESERVED / CONFIRMED
-                          </span>
-                        </td>
-                      </tr>
+                      {isOutbound ? (
+                        <>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>PESERTA</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              <input
+                                type="text"
+                                value={participantCount}
+                                onChange={(e) => setParticipantCount(e.target.value)}
+                                className="w-full font-semibold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-200 rounded px-1 print-input-hide"
+                              />
+                              <span className="print-value font-semibold text-slate-800">{participantCount}</span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>STATUS</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              <span className="inline-block px-2.5 py-0.5 text-[10px] font-bold rounded animate-pulse" style={{ backgroundColor: activeTheme.accent, color: activeTheme.primary }}>
+                                CONFIRMED
+                              </span>
+                            </td>
+                          </tr>
+                        </>
+                      ) : (
+                        <>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>DURASI SEWA</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 font-semibold text-slate-800 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              {Math.max(1, Math.round((new Date(checkOutDate).getTime() - new Date(checkInDate).getTime()) / (1000 * 60 * 60 * 24)))} Malam
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className={`font-semibold text-slate-500 py-1 ${spacingStyles.reservationTd[spacingMode]}`}>STATUS RESERVASI</td>
+                            <td className={`text-center text-slate-400 ${spacingStyles.reservationTd[spacingMode]}`}>:</td>
+                            <td className={`py-1 ${spacingStyles.reservationTd[spacingMode]}`}>
+                              <span className="inline-block px-2.5 py-0.5 text-[10px] font-bold rounded animate-pulse" style={{ backgroundColor: activeTheme.accent, color: activeTheme.primary }}>
+                                RESERVED / CONFIRMED
+                              </span>
+                            </td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
                 </div>
 
               </div>
 
-              {/* DAFTAR VILLA / JASA LAYANAN */}
-              <div className={`overflow-hidden rounded-lg border border-slate-200 ${spacingStyles.tableMargin[spacingMode]}`}>
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="font-bold text-white uppercase tracking-wider" style={{ backgroundColor: activeTheme.primary }}>
-                      <th className={`text-center w-12 ${spacingStyles.tableTh[spacingMode]}`}>No.</th>
-                      <th className={`${spacingStyles.tableTh[spacingMode]}`}>Deskripsi Sewa / Layanan</th>
-                      <th className={`text-right w-32 ${spacingStyles.tableTh[spacingMode]}`}>Harga Satuan</th>
-                      <th className={`text-center w-16 ${spacingStyles.tableTh[spacingMode]}`}>Qty / Malam</th>
-                      <th className={`text-right w-36 ${spacingStyles.tableTh[spacingMode]}`}>Total Harga</th>
-                      <th className={`w-10 text-center print-hidden ${spacingStyles.tableTh[spacingMode]}`}></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {items.map((item, index) => (
-                      <tr key={item.id} className="hover:bg-slate-50/50 group">
-                        {/* Kolom Nomor */}
-                        <td className={`text-center font-mono font-medium text-slate-500 ${spacingStyles.tableTd[spacingMode]}`}>
-                          {String(index + 1).padStart(2, '0')}
-                        </td>
-                        
-                        {/* Kolom Nama Item */}
-                        <td className={`${spacingStyles.tableTd[spacingMode]}`}>
-                          <input 
-                            type="text" 
-                            value={item.name} 
-                            onChange={(e) => handleItemChange(item.id, 'name', e.target.value)}
-                            className="w-full font-semibold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-200 rounded px-1.5 py-1 text-slate-800 text-xs"
-                          />
-                        </td>
-                        
-                        {/* Kolom Harga */}
-                        <td className={`text-right ${spacingStyles.tableTd[spacingMode]}`}>
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-slate-400">Rp</span>
-                            <input 
-                              type="number" 
-                              value={item.price} 
-                              onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
-                              className="w-24 text-right font-medium bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-200 rounded px-1 py-1 text-xs print-input-hide"
-                            />
-                            <span className="print-value font-medium text-xs tabular-nums">{Number(item.price).toLocaleString('id-ID')}</span>
-                          </div>
-                        </td>
-                        
-                        {/* Kolom Kuantitas */}
-                        <td className={`text-center ${spacingStyles.tableTd[spacingMode]}`}>
-                          <input 
-                            type="number" 
-                            value={item.qty} 
-                            min="1"
-                            onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
-                            className="w-12 text-center font-bold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-200 rounded py-1 text-xs"
-                          />
-                        </td>
-                        
-                        {/* Kolom Total Item */}
-                        <td className={`text-right font-bold tabular-nums text-slate-800 ${spacingStyles.tableTd[spacingMode]}`}>
-                          {formatRupiah(item.price * item.qty)}
-                        </td>
-
-                        {/* Tombol Hapus Baris (Sembunyi ketika dicetak) */}
-                        <td className={`text-center print-hidden ${spacingStyles.tableTd[spacingMode]}`}>
-                          <button 
-                            onClick={() => deleteItem(item.id)}
-                            className="text-red-450 hover:text-red-600 transition p-1 rounded hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                            title="Hapus baris"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-
-                    {/* Tombol Sisip Item Baru (Sembunyi ketika dicetak) */}
-                    <tr className="print-hidden bg-slate-50/50">
-                      <td colSpan={6} className="p-2">
-                        <button
-                          onClick={() => addItem()}
-                          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 border border-dashed border-slate-300 hover:border-slate-400 rounded-lg transition"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          Tambah Baris Baru / Layanan Extra
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              {/* DAFTAR VILLA / JASA LAYANAN (komponen blok, urutan via layout) */}
+              <ItemsTableBlock
+                items={items}
+                spacingMode={spacingMode}
+                qtyHeader={qtyHeader}
+                descHeader={descHeader}
+                addLabel={addItemLabel}
+                primaryColor={activeTheme.primary}
+                marginClass={spacingStyles.tableMargin[spacingMode]}
+                thClass={spacingStyles.tableTh[spacingMode]}
+                tdClass={spacingStyles.tableTd[spacingMode]}
+                order={blockOrder('itemsTable')}
+                hidden={!isBlockVisible('itemsTable')}
+                onItemChange={handleItemChange}
+                onAddItem={() => addItem()}
+                onDeleteItem={deleteItem}
+              />
 
               {/* PANEL SUMMARY & INFORMASI DETAIL */}
-              <div className={`grid grid-cols-12 items-start ${spacingStyles.summaryGrid[spacingMode]}`}>
+              <div className={`grid grid-cols-12 items-start ${spacingStyles.summaryGrid[spacingMode]}${isBlockVisible('summary') ? '' : ' hidden'}`} style={{ order: blockOrder('summary') }}>
                 
                 {/* Blok Kiri: Data Bank & Aturan Catatan */}
                 <div className="col-span-7 space-y-4 text-slate-700">
@@ -1996,21 +2225,53 @@ export default function App() {
                     <span className="font-bold tabular-nums text-slate-800">{formatRupiah(subtotal)}</span>
                   </div>
 
-                  {/* Down Payment */}
+                  {/* Down Payment (Rp nominal atau % termin) */}
                   <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
-                    <span className="font-semibold text-slate-600">
+                    <span className="font-semibold text-slate-600 flex items-center gap-1.5">
                       DP (Down Payment)
+                      <span className="print-hidden inline-flex rounded-md border border-slate-200 overflow-hidden">
+                        <button
+                          onClick={() => setDpMode('nominal')}
+                          title="DP nominal Rupiah"
+                          className={`px-1.5 py-0.5 text-[10px] font-bold transition ${dpMode === 'nominal' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                          Rp
+                        </button>
+                        <button
+                          onClick={() => setDpMode('percent')}
+                          title="DP persen dari subtotal-diskon"
+                          className={`px-1.5 py-0.5 text-[10px] font-bold transition ${dpMode === 'percent' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                          %
+                        </button>
+                      </span>
                     </span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400">Rp</span>
-                      <input 
-                        type="number" 
-                        value={dpValue} 
-                        onChange={(e) => setDpValue(Number(e.target.value))}
-                        className="w-20 text-right font-bold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-300 rounded p-0.5 print-input-hide"
-                      />
-                      <span className="print-value font-bold tabular-nums">{Number(dpValue).toLocaleString('id-ID')}</span>
-                    </div>
+                    {dpMode === 'percent' ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={dpPercent}
+                          min={0}
+                          max={100}
+                          onChange={(e) => setDpPercent(Math.min(100, Math.max(0, Number(e.target.value))))}
+                          className="w-14 text-right font-bold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-300 rounded p-0.5 print-input-hide"
+                        />
+                        <span className="font-bold text-slate-500">%</span>
+                        <span className="text-[10px] text-slate-400 tabular-nums print-hidden">= {formatRupiah(dpEffective)}</span>
+                        <span className="print-value font-bold tabular-nums">{dpPercent}% ({Number(dpEffective).toLocaleString('id-ID')})</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <span className="text-slate-400">Rp</span>
+                        <input
+                          type="number"
+                          value={dpValue}
+                          onChange={(e) => setDpValue(Number(e.target.value))}
+                          className="w-20 text-right font-bold bg-transparent focus:bg-white focus:outline-none border border-transparent hover:border-slate-300 rounded p-0.5 print-input-hide"
+                        />
+                        <span className="print-value font-bold tabular-nums">{Number(dpValue).toLocaleString('id-ID')}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Diskon / Potongan */}
@@ -2043,10 +2304,22 @@ export default function App() {
 
               </div>
 
+              {/* TANDA TANGAN & PENGESAHAN (komponen blok, urutan via layout) */}
+              <SignatureBlock
+                clientName={customerName}
+                vendorName={businessManagement}
+                primaryColor={activeTheme.primary}
+                order={blockOrder('signature')}
+                hidden={!isBlockVisible('signature')}
+                spacingMode={spacingMode}
+                onClientNameChange={setCustomerName}
+                onVendorNameChange={setBusinessManagement}
+              />
+
             </div>
 
             {/* BANNER BAWAH / STATUS KETENTUAN */}
-            <div className={`border-t ${spacingStyles.footerBanner[spacingMode]}`}>
+            <div className={`border-t ${spacingStyles.footerBanner[spacingMode]}${isBlockVisible('footerBanner') ? '' : ' hidden'}`}>
               
               {/* Box Info Pelunasan */}
               <div className="text-center py-2.5 rounded mb-3 font-extrabold tracking-wide text-xs" style={{ backgroundColor: activeTheme.primary, color: '#ffffff' }}>
@@ -2060,11 +2333,11 @@ export default function App() {
 
               {/* Keterangan Aturan Waktu Check-in/Out */}
               <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                <span>Check-in: {checkInTime} WIB</span>
+                <span>{isOutbound ? 'Mulai' : 'Check-in'}: {checkInTime} WIB</span>
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: activeTheme.secondary }}></span>
-                <span>Pinarak Villa Management</span>
+                <span>{businessManagement}</span>
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: activeTheme.secondary }}></span>
-                <span>Check-out: {checkOutTime} WIB</span>
+                <span>{isOutbound ? 'Selesai' : 'Check-out'}: {checkOutTime} WIB</span>
               </div>
 
             </div>

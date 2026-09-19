@@ -12,6 +12,7 @@ coverage/
 .cache/
 graphify-out/
 graphify-obsidian/
+.codebase-memory/
 .agents/
 *.log
 .env
